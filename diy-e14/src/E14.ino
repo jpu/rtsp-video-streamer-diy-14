@@ -21,15 +21,14 @@
  
 #include "src/OV2640.h"
 #include <WiFi.h>
-#include <WebServer.h>
 #include <WiFiClient.h>
 
-#include "src/SimStreamer.h"
 #include "src/OV2640Streamer.h"
 #include "src/CRtspSession.h"
 
 const char *ssid =     "AP";         // Put your SSID here
 const char *password = "12345";      // Put your PASSWORD here
+#define DEVICE_NAME "ESP32CAM"
 
 //#define ENABLE_WEBSERVER
 #define ENABLE_RTSPSERVER
@@ -43,24 +42,22 @@ const char *password = "12345";      // Put your PASSWORD here
 //#define CAMERA_MODEL_M5STACK_WIDE
 #define CAMERA_MODEL_AI_THINKER
 
-#define CAM_FRAMESIZE FRAMESIZE_VGA
+#define CAM_FRAMESIZE FRAMESIZE_SVGA
 #define CAM_QUALITY 12
 #define CAM_FRAMERATE 10
 
-#include "camera_pins.h"
-
 //Arduino OTA Config
-#define OTA_NAME "ESP32CAM"
-#define OTA_PORT 8266 //default
+#define OTA_NAME DEVICE_NAME
+#define OTA_PORT 3232 //default
 #define OTA_PASS NULL
 
 //MQTT Config
-#define MQTT_SERVER "homeassistant.localdomain"
+#define MQTT_SERVER "192.168.1.163" //DNS resolving on EPS32 arduino is broken "homeassistant.localdomain"
 #define MQTT_PORT 1883
 #define MQTT_USER "mqtt"
 #define MQTT_PASS "mqtt"
-#define MQTT_CLIENT OTA_NAME
-#define MQTT_TOPIC "home/esp32cam/led"
+#define MQTT_CLIENT DEVICE_NAME
+#define MQTT_TOPIC "home/" DEVICE_NAME "/led"
 
 #ifdef ENABLE_OTA
 #include <ArduinoOTA.h>
@@ -70,9 +67,16 @@ const char *password = "12345";      // Put your PASSWORD here
 #include <PubSubClient.h>
 WiFiClient esp_client;
 PubSubClient mqtt_client(esp_client);
+
+//LED PWM properties
+const int ledPin = 4;
+const int ledFreq = 1000;
+const int ledChannel = 1; //0 is used by the camera
+const int ledResolution = 8;
 #endif
 
 #ifdef ENABLE_WEBSERVER
+#include <WebServer.h>
 WebServer server(80);
 #endif
 
@@ -80,6 +84,7 @@ WebServer server(80);
 WiFiServer rtspServer(8554);
 #endif
 
+#include "camera_pins.h"
 OV2640 cam;
 CStreamer *streamer;
 CRtspSession *session;
@@ -105,7 +110,8 @@ void mqtt_client_callback(char* topic, uint8_t* payload, unsigned int length)
 
   //TODO set LED
   #if defined(CAMERA_MODEL_AI_THINKER)
-    digitalWrite(4, intensity);
+    //digitalWrite(4, intensity);
+    ledcWrite(ledChannel, intensity);
   #endif
 }
 
@@ -191,7 +197,11 @@ void setup()
 
     //setup camera LED
     #if defined(CAMERA_MODEL_AI_THINKER)
-      pinMode(4, OUTPUT);
+      //pinMode(4, OUTPUT);
+      //digitalWrite(4, 0); //off
+      ledcSetup(ledChannel, ledFreq, ledResolution);
+      ledcAttachPin(ledPin, ledChannel);
+      ledcWrite(ledChannel, 0);
     #endif
 
     camera_config_t config;
@@ -228,6 +238,7 @@ void setup()
     
     IPAddress ip;
 
+    Serial.print("WiFi start...");
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED)
@@ -258,6 +269,32 @@ void setup()
 #endif
 
 #ifdef ENABLE_OTA
+  ArduinoOTA
+    .onStart([]() {
+      String type;
+      if (ArduinoOTA.getCommand() == U_FLASH)
+        type = "sketch";
+      else // U_SPIFFS
+        type = "filesystem";
+
+      // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+      Serial.println("Start updating " + type);
+    })
+    .onEnd([]() {
+      Serial.println("\nEnd");
+    })
+    .onProgress([](unsigned int progress, unsigned int total) {
+      Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    })
+    .onError([](ota_error_t error) {
+      Serial.printf("Error[%u]: ", error);
+      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+      else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    });
+
     //Setup OTA
     ArduinoOTA.setPort(OTA_PORT);
     ArduinoOTA.setHostname(OTA_NAME);

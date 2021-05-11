@@ -26,11 +26,11 @@
 #include "src/OV2640Streamer.h"
 #include "src/CRtspSession.h"
 
-const char *ssid =     "AP";         // Put your SSID here
-const char *password = "12345";      // Put your PASSWORD here
-#define DEVICE_NAME "ESP32CAM"
+const char *ssid =     "SSID";          // Put your SSID here
+const char *password = "password";      // Put your PASSWORD here
+#define DEVICE_NAME "esp32cam-01"       // Host name
 
-//#define ENABLE_WEBSERVER
+#define ENABLE_WEBSERVER
 #define ENABLE_RTSPSERVER
 #define ENABLE_MQTT
 #define ENABLE_OTA
@@ -42,9 +42,10 @@ const char *password = "12345";      // Put your PASSWORD here
 //#define CAMERA_MODEL_M5STACK_WIDE
 #define CAMERA_MODEL_AI_THINKER
 
-#define CAM_FRAMESIZE FRAMESIZE_SVGA
+#define CAM_FRAMESIZE FRAMESIZE_SXGA
+//#define CAM_FRAMESIZE FRAMESIZE_VGA
 #define CAM_QUALITY 12
-#define CAM_FRAMERATE 10
+#define CAM_FRAMERATE 2
 
 //Arduino OTA Config
 #define OTA_NAME DEVICE_NAME
@@ -52,12 +53,16 @@ const char *password = "12345";      // Put your PASSWORD here
 #define OTA_PASS NULL
 
 //MQTT Config
-#define MQTT_SERVER "192.168.1.163" //DNS resolving on EPS32 arduino is broken "homeassistant.localdomain"
+#define MQTT_SERVER "192.168.0.100"   //DNS resolving on EPS32 arduino is broken "homeassistant.localdomain"
 #define MQTT_PORT 1883
-#define MQTT_USER "mqtt"
-#define MQTT_PASS "mqtt"
+#define MQTT_USER ""
+#define MQTT_PASS ""
 #define MQTT_CLIENT DEVICE_NAME
-#define MQTT_TOPIC "home/" DEVICE_NAME "/led"
+#define MQTT_LED_TOPIC "devices/" DEVICE_NAME "/set/led"
+#define MQTT_WILL_TOPIC "devices/" DEVICE_NAME "/connected"
+#define MQTT_WILL_MSG "false"
+#define MQTT_LED_STATE_TOPIC "devices/" DEVICE_NAME "/state/led"
+#define MQTT_CONNECT_RETRY 30000 //try to reconnect every thirty seconds only
 
 #ifdef ENABLE_OTA
 #include <ArduinoOTA.h>
@@ -73,6 +78,7 @@ const int ledPin = 4;
 const int ledFreq = 1000;
 const int ledChannel = 1; //0 is used by the camera
 const int ledResolution = 8;
+unsigned long mqtt_last_reconnect = 0;
 #endif
 
 #ifdef ENABLE_WEBSERVER
@@ -119,20 +125,12 @@ void mqtt_reconnect()
 {
   if (mqtt_client.connected() == false)
   {
-    Serial.print("MQTT Connecting...");
-    do
+    if (mqtt_client.connect(MQTT_CLIENT, MQTT_USER, MQTT_PASS, MQTT_WILL_TOPIC, 1, true, MQTT_WILL_MSG) == true)
     {
-      if (mqtt_client.connect(MQTT_CLIENT, MQTT_USER, MQTT_PASS) == true)
-      {
-        Serial.println(" Connected!");
-        mqtt_client.subscribe(MQTT_TOPIC);
-      }
-      else
-      {
-        Serial.print(".");
-        delay(1000);
-      }
-    } while (mqtt_client.connected() == false);
+      Serial.println("MQTT Connected!");
+      mqtt_client.subscribe(MQTT_LED_TOPIC);
+      mqtt_client.publish(MQTT_WILL_TOPIC, "true", true);
+    }
   }
 }
 #endif
@@ -280,12 +278,6 @@ void setup()
       // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
       Serial.println("Start updating " + type);
     })
-    .onEnd([]() {
-      Serial.println("\nEnd");
-    })
-    .onProgress([](unsigned int progress, unsigned int total) {
-      Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
-    })
     .onError([](ota_error_t error) {
       Serial.printf("Error[%u]: ", error);
       if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
@@ -318,8 +310,15 @@ void loop()
 #endif
 
 #ifdef ENABLE_MQTT
-    mqtt_reconnect();
+    if (!mqtt_client.connected()){
+      if ((millis() - MQTT_CONNECT_RETRY) >= mqtt_last_reconnect)
+      {
+        printf("warning MQTT not connected, try to connect");
+        mqtt_reconnect();
+        mqtt_last_reconnect = millis();
+      }
     mqtt_client.loop();
+    }
 #endif
 
 #ifdef ENABLE_RTSPSERVER
@@ -353,9 +352,8 @@ void loop()
         rtsp_client = rtspServer.accept();
 
         if(rtsp_client) {
-            streamer = new OV2640Streamer(&rtsp_client, cam);             // our streamer for UDP/TCP based RTP transport
-
-            session = new CRtspSession(&rtsp_client, streamer); // our threads RTSP session and state
+            streamer = new OV2640Streamer(&rtsp_client, cam);      // our streamer for UDP/TCP based RTP transport
+            session = new CRtspSession(&rtsp_client, streamer);    // our threads RTSP session and state
         }
     }
 #endif

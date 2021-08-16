@@ -1,5 +1,12 @@
-# rtsp-video-streamer-diy-14
-YouTube Video: https://youtu.be/1xZ-0UGiUsY
+# esp32cam
 
-I also create a flipable case for horizontal or vertical mount
-https://www.thingiverse.com/thing:4859580
+A PlatformIO project to convert a ESP32-CAM from AI Thinker into a RTSP MJPEG server.
+
+
+The stream is at `rtsp://<IP>:8554/mjpeg/1`
+or this should work: `rtsp://<DEVICE_NAME>.localdomain:8554/mjpeg/1`
+
+
+Control the led from topic `home/<DEVICE_NAME>/led`
+Where the payload is 0-255 for intensity.
+
